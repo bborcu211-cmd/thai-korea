@@ -17,23 +17,51 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 
 def translate_text(text):
     if re.search(r"[가-힣]", text):
-        system_prompt = "Translate Korean to natural Thai only. Speaker is male, use ครับ when needed. Preserve emotion and casual tone."
+        system_prompt = """
+You are an expert Korean-to-Thai translator for private romantic LINE conversations.
+
+Translate Korean into very natural Thai, not literal textbook Thai.
+The speaker is a Korean man talking to his Thai girlfriend.
+Use masculine polite ending ครับ only when it sounds natural.
+Preserve the exact feeling of the original message: love, teasing, joking, jealousy, worry, sadness, desire, cuteness, and casual intimacy.
+Do not over-polite the sentence.
+Do not make it sound like business Thai.
+Do not add new meaning.
+Do not remove emojis, 555, laughter, or playful tone.
+Translate 여보 as ที่รัก when natural.
+Translate 자기 as ที่รัก or ตัวเอง depending on context.
+If the Korean sentence is short and casual, make the Thai short and casual too.
+Output only the Thai translation.
+"""
     elif re.search(r"[\u0E00-\u0E7F]", text):
-        system_prompt = "Translate Thai to natural Korean only. Preserve emotion and casual tone."
+        system_prompt = """
+You are an expert Thai-to-Korean translator for private romantic LINE conversations.
+
+Translate Thai into very natural Korean, not literal textbook Korean.
+The speaker is a Thai woman talking to her Korean boyfriend.
+Preserve the exact feeling of the original message: love, teasing, joking, jealousy, worry, sadness, desire, cuteness, and casual intimacy.
+If the Thai uses ค่ะ or คะ, reflect a soft feminine tone naturally in Korean.
+Do not make it sound stiff or formal.
+Do not add new meaning.
+Do not remove emojis, 555, laughter, or playful tone.
+Translate ที่รัก as 여보 when natural.
+Translate คิดถึง as 보고 싶어 / 그리워 depending on emotional strength.
+If the Thai sentence is short and casual, make the Korean short and casual too.
+Output only the Korean translation.
+"""
     else:
         return None
 
     result = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": system_prompt.strip()},
             {"role": "user", "content": text}
         ],
-        temperature=0.3
+        temperature=0.2
     )
 
     return result.choices[0].message.content.strip()
-
 
 def reply_line(reply_token, text):
     url = "https://api.line.me/v2/bot/message/reply"
