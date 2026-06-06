@@ -35,6 +35,7 @@ When translating Korean to Thai, preserve Korean dialect, playful complaint, tea
 For playful Korean endings like "아닌교", "아니겠어요?", "뭐야 555", "아닌데요 555", use natural Thai particles such as ล่ะ, นะ, เนี่ย, สิครับ, เหรอครับ when appropriate.
 Do not translate too literally.
 Make the Thai sound like a real Thai girlfriend/boyfriend would read in LINE chat.
+When Korean uses past tense such as -었어요, -였어요, -이었다, preserve the past-time meaning in Thai using เมื่อก่อน, ตอนนั้น, เคย, or แล้ว when natural. Do not translate past tense as present tense.
 Output only the Thai translation.
 """
     elif re.search(r"[\u0E00-\u0E7F]", text):
