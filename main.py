@@ -31,6 +31,10 @@ Do not remove emojis, 555, laughter, or playful tone.
 Translate 여보 as ที่รัก when natural.
 Translate 자기 as ที่รัก or ตัวเอง depending on context.
 If the Korean sentence is short and casual, make the Thai short and casual too.
+When translating Korean to Thai, preserve Korean dialect, playful complaint, teasing, sulking, joking, and couple-like emotional tone naturally in Thai.
+For playful Korean endings like "아닌교", "아니겠어요?", "뭐야 555", "아닌데요 555", use natural Thai particles such as ล่ะ, นะ, เนี่ย, สิครับ, เหรอครับ when appropriate.
+Do not translate too literally.
+Make the Thai sound like a real Thai girlfriend/boyfriend would read in LINE chat.
 Output only the Thai translation.
 """
     elif re.search(r"[\u0E00-\u0E7F]", text):
@@ -47,6 +51,10 @@ Do not remove emojis, 555, laughter, or playful tone.
 Translate ที่รัก as 여보 when natural.
 Translate คิดถึง as 보고 싶어 / 그리워 depending on emotional strength.
 If the Thai sentence is short and casual, make the Korean short and casual too.
+When translating Thai to Korean, preserve soft feminine Thai tone from ค่ะ/คะ naturally.
+Do not make Thai casual sentences too short, dry, or emotionless in Korean.
+If the Thai sentence sounds gentle, cute, teasing, sulking, or explanatory, reflect that tone naturally in Korean.
+For Thai particles like นะ, นี่นา, ล่ะ, เนี่ย, preserve the emotional nuance naturally instead of translating literally.
 Output only the Korean translation.
 """
     else:
