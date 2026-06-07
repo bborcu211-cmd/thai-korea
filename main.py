@@ -1,6 +1,7 @@
 import os
 import re
 import hmac
+import json
 import hashlib
 import base64
 import requests
@@ -13,25 +14,50 @@ app = FastAPI()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+MAX_HISTORY_ITEMS = 10
+MAX_CONTEXT_CHARS_PER_MESSAGE = 500
 
 # 채팅방별 최근 대화 기억
 # Render 무료 서버가 잠들거나 재배포되면 초기화됩니다.
-CHAT_HISTORY = defaultdict(lambda: deque(maxlen=8))
+CHAT_HISTORY = defaultdict(lambda: deque(maxlen=MAX_HISTORY_ITEMS))
+
+RESET_COMMANDS = {
+    "/reset",
+    "/clear",
+    "/forget",
+    "reset",
+    "clear"
+}
 
 
-def is_korean(text):
-    return re.search(r"[가-힣]", text) is not None
+def count_korean(text):
+    return len(re.findall(r"[가-힣]", text))
 
 
-def is_thai(text):
-    return re.search(r"[\u0E00-\u0E7F]", text) is not None
+def count_thai(text):
+    return len(re.findall(r"[\u0E00-\u0E7F]", text))
+
+
+def detect_direction(text):
+    korean_count = count_korean(text)
+    thai_count = count_thai(text)
+
+    if korean_count == 0 and thai_count == 0:
+        return None
+
+    if korean_count >= thai_count:
+        return "ko_to_th"
+
+    return "th_to_ko"
 
 
 def get_chat_id(event):
     source = event.get("source", {})
-    source_type = source.get("type")
+    source_type = source.get("type", "")
 
     if source_type == "group":
         return source.get("groupId", "group_default")
@@ -45,14 +71,39 @@ def get_chat_id(event):
     return "default"
 
 
-def add_history(chat_id, speaker, text):
+def get_sender_label(event):
+    source = event.get("source", {})
+    user_id = source.get("userId", "unknown")
+
+    if user_id == "unknown":
+        return "speaker_unknown"
+
+    return "speaker_" + user_id[-6:]
+
+
+def shorten_text(text, limit=MAX_CONTEXT_CHARS_PER_MESSAGE):
+    clean = " ".join(text.split())
+
+    if len(clean) <= limit:
+        return clean
+
+    return clean[:limit] + "..."
+
+
+def add_history(chat_id, sender_label, language_label, text):
     if not text:
         return
 
     CHAT_HISTORY[chat_id].append({
-        "speaker": speaker,
-        "text": text
+        "sender": sender_label,
+        "language": language_label,
+        "text": shorten_text(text)
     })
+
+
+def clear_history(chat_id):
+    if chat_id in CHAT_HISTORY:
+        CHAT_HISTORY[chat_id].clear()
 
 
 def get_recent_context(chat_id):
@@ -64,61 +115,57 @@ def get_recent_context(chat_id):
     lines = []
 
     for item in history:
-        speaker = item.get("speaker", "Unknown")
+        sender = item.get("sender", "speaker_unknown")
+        language = item.get("language", "unknown")
         text = item.get("text", "")
-        lines.append(f"{speaker}: {text}")
+        lines.append(f"{sender} [{language}]: {text}")
 
     return "\n".join(lines)
 
 
+def get_language_label(direction):
+    if direction == "ko_to_th":
+        return "Korean"
+
+    if direction == "th_to_ko":
+        return "Thai"
+
+    return "Unknown"
+
+
 def get_korean_to_thai_prompt():
     return """
-You are a Korean-to-Thai translator for private romantic LINE chat.
+You are a careful Korean-to-Thai translator for private romantic LINE chat.
 
-Translate the CURRENT Korean message into Thai.
+Translate only the CURRENT Korean message into Thai.
 Use the recent conversation context only to resolve ambiguity.
-Do not translate the context itself.
+Do not translate or summarize the context.
 
-Most important rule:
-Preserve the exact meaning first.
-Do not simplify, summarize, reinterpret, or change the sentence.
-Do not change the subject, object, tense, question form, or emotional intention.
+Accuracy comes first:
+- Understand the whole sentence before translating.
+- Preserve the original meaning, subject, object, tense, question form, and emotional intention.
+- Do not simplify, summarize, exaggerate, or reinterpret the message.
+- Do not add new information that is not in the original message.
+- If the meaning is ambiguous, choose a neutral translation that keeps the ambiguity instead of guessing too much.
 
-The speaker is a Korean man talking to his Thai girlfriend.
-Use ครับ when a male polite ending is natural.
-Translate 여보 as ที่รัก when natural.
-Translate 자기 as ที่รัก or ตัวเอง depending on context.
-Keep 555, emojis, laughter, and punctuation.
+Naturalness comes second:
+- Make the Thai sound natural for a real LINE conversation between lovers.
+- The speaker is a Korean man talking to his Thai girlfriend.
+- Use masculine polite Thai such as ครับ only when it sounds natural.
+- Preserve joking, teasing, sulking, playful complaints, dialect-like endings, laughter, 555, emojis, and punctuation.
+- Keep short casual messages short and casual.
 
-Preserve past tense:
-If Korean uses past tense such as -었어요, -였어요, -이었다, 이었어요, 했어요, preserve the past-time meaning in Thai.
-Use เมื่อก่อน, ตอนนั้น, เคย, or แล้ว when natural.
-Do not translate past tense as present tense.
+Korean grammar and nuance:
+- Preserve past tense, present tense, future intention, negation, and questions.
+- Korean casual or idiomatic expressions should be translated by intended meaning, not word by word.
+- Korean particles such as 은/는, 이/가, 을/를 often show focus. Preserve what the sentence is really about.
+- If the Korean sentence misses a place, translate the place as the thing being missed. If it misses a person, translate the person as the thing being missed. Do not confuse the two.
+- If the Korean sentence is a confirming question, keep it as a confirming question in Thai.
 
-Korean casual expressions:
-For "놀고먹다", preserve the intended meaning.
-It usually means living comfortably, lazing around, eating and resting without working much.
-It does not simply mean traveling or hanging out.
-
-Grammatical focus:
-If Korean says "태국이 그립다", the object being missed is Thailand, not a person.
-If Korean says "여보가 있는 태국", translate it as "Thailand where my love is", not "my love who is in Thailand", unless the Korean clearly means the person.
-For "여보가 있는 태국이 그립다", translate as "คิดถึงประเทศไทยที่มีที่รักอยู่" or "คิดถึงไทยที่มีที่รักอยู่".
-
-Playful endings:
-"아닌교", "아닌가요", "아니겠어요" often mean a playful confirming question.
-Translate them with Thai forms like ไม่ใช่เหรอครับ, ใช่ไหมครับ, or นะครับ depending on context.
-Do not drop the confirming-question feeling.
-
-Examples:
-Korean: 내가 여보를 사랑한다 아닌교
-Thai: ผมรักที่รักอยู่แล้วไม่ใช่เหรอครับ
-
-Korean: 이정도야 뭘 재미있어요 555
-Thai: แค่นี้เอง จะไปสนุกอะไรล่ะครับ 555
-
-Korean: 나는 놀고먹는 쪽이었어요
-Thai: เมื่อก่อนผมเป็นพวกชอบอยู่สบายๆ กินๆ นอนๆ มากกว่าครับ
+Relationship tone:
+- Translate 여보 naturally as ที่รัก when appropriate.
+- Translate 자기 naturally as ที่รัก, ตัวเอง, or another natural Thai expression depending on context.
+- Do not make romantic chat sound like business Thai.
 
 Output only the Thai translation.
 """
@@ -126,50 +173,50 @@ Output only the Thai translation.
 
 def get_thai_to_korean_prompt():
     return """
-You are a Thai-to-Korean translator for private romantic LINE chat.
+You are a careful Thai-to-Korean translator for private romantic LINE chat.
 
-Translate the CURRENT Thai message into Korean.
+Translate only the CURRENT Thai message into Korean.
 Use the recent conversation context only to resolve ambiguity.
-Do not translate the context itself.
+Do not translate or summarize the context.
 
-Most important rule:
-Preserve the exact meaning first.
-Do not simplify, summarize, reinterpret, or change the sentence.
-Do not change the subject, object, tense, question form, or emotional intention.
+Accuracy comes first:
+- Understand the whole sentence before translating.
+- Preserve the original meaning, subject, object, tense, question form, and emotional intention.
+- Do not simplify, summarize, exaggerate, or reinterpret the message.
+- Do not add new information that is not in the original message.
+- If the meaning is ambiguous, choose a neutral translation that keeps the ambiguity instead of guessing too much.
 
-The speaker is a Thai woman talking to her Korean boyfriend.
-If Thai uses ค่ะ or คะ, reflect a soft feminine tone naturally in Korean.
-Translate ที่รัก as 여보 when natural.
-Keep 555, emojis, laughter, and punctuation.
+Naturalness comes second:
+- Make the Korean sound natural for a real LINE conversation between lovers.
+- The speaker is a Thai woman talking to her Korean boyfriend.
+- Preserve soft feminine tone from ค่ะ and คะ naturally, but do not overdo it.
+- Preserve joking, teasing, sulking, playful complaints, laughter, 555, emojis, and punctuation.
+- Keep short casual messages short and casual.
 
-Preserve the exact target of "คิดถึง":
-If Thai says "คิดถึงไทย", translate it as "태국이 그리워" or "태국이 보고 싶어".
-If Thai says "คิดถึงคนที่อยู่ไทย", translate it as "태국에 있는 사람이 보고 싶어".
-Do not confuse missing a country/place with missing a person.
+Thai grammar and nuance:
+- Thai relationship chat often uses flexible self-reference, lover-reference, kinship words, nicknames, and particles. Infer the role from context instead of defaulting to a literal family meaning.
+- Particles such as นะ, ล่ะ, เนี่ย, นี่นา, สิ, อะ, อ่ะ carry emotion. Preserve the feeling naturally instead of translating them word by word.
+- Preserve the exact target of verbs like คิดถึง, ชอบ, อยาก, เป็นห่วง, and ไม่อยาก. Do not confuse a person, place, action, or situation.
+- For app slang, filters, trends, or unclear TikTok/social-media expressions, use a neutral translation instead of over-interpreting.
 
-Thai particles:
-For นะ, นี่นา, ล่ะ, เนี่ย, preserve the emotional nuance naturally instead of translating literally.
-Do not make Thai casual sentences too short, dry, or emotionless in Korean.
-If the Thai sentence sounds gentle, cute, teasing, sulking, or explanatory, reflect that tone naturally in Korean.
-
-Examples:
-Thai: แค่นี้เอง จะไปสนุกอะไรล่ะครับ 555
-Korean: 이 정도야 뭐가 재밌어요 555
-
-Thai: ตัวเองหายไปไหนมา?
-Korean: 자기 어디 갔다 왔어?
+Relationship tone:
+- Translate ที่รัก naturally as 여보 when appropriate.
+- Do not make romantic chat sound stiff, dry, or formal.
 
 Output only the Korean translation.
 """
 
 
 def translate_text(text, chat_id):
-    if is_korean(text):
-        system_prompt = get_korean_to_thai_prompt()
-    elif is_thai(text):
-        system_prompt = get_thai_to_korean_prompt()
-    else:
+    direction = detect_direction(text)
+
+    if direction is None:
         return None
+
+    if direction == "ko_to_th":
+        system_prompt = get_korean_to_thai_prompt()
+    else:
+        system_prompt = get_thai_to_korean_prompt()
 
     recent_context = get_recent_context(chat_id)
 
@@ -182,7 +229,7 @@ Current message to translate:
 """
 
     result = client.chat.completions.create(
-        model="gpt-4o",
+        model=OPENAI_MODEL,
         messages=[
             {
                 "role": "system",
@@ -200,6 +247,13 @@ Current message to translate:
 
 
 def reply_line(reply_token, text):
+    if not reply_token:
+        return False
+
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        print("LINE_CHANNEL_ACCESS_TOKEN is missing.")
+        return False
+
     url = "https://api.line.me/v2/bot/message/reply"
 
     headers = {
@@ -217,24 +271,23 @@ def reply_line(reply_token, text):
         ]
     }
 
-    response = requests.post(url, headers=headers, json=data)
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+    except Exception as error:
+        print("LINE reply request failed:", str(error))
+        return False
 
     if response.status_code >= 400:
         print("LINE reply error:", response.status_code, response.text)
+        return False
+
+    return True
 
 
-@app.get("/")
-def home():
-    return {
-        "status": "ok",
-        "message": "LINE translator bot is running"
-    }
-
-
-@app.post("/webhook")
-async def webhook(request: Request):
-    body = await request.body()
-    signature = request.headers.get("x-line-signature", "")
+def verify_line_signature(body, signature):
+    if not LINE_CHANNEL_SECRET:
+        print("LINE_CHANNEL_SECRET is missing.")
+        return False
 
     expected_signature = base64.b64encode(
         hmac.new(
@@ -244,10 +297,29 @@ async def webhook(request: Request):
         ).digest()
     ).decode("utf-8")
 
-    if signature != expected_signature:
+    return hmac.compare_digest(signature, expected_signature)
+
+
+@app.get("/")
+def home():
+    return {
+        "status": "ok",
+        "message": "LINE Korean Thai translator bot is running"
+    }
+
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    body = await request.body()
+    signature = request.headers.get("x-line-signature", "")
+
+    if not verify_line_signature(body, signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    data = await request.json()
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
     for event in data.get("events", []):
         if event.get("type") != "message":
@@ -258,24 +330,35 @@ async def webhook(request: Request):
         if message.get("type") != "text":
             continue
 
-        user_text = message.get("text", "")
-        reply_token = event.get("replyToken")
+        user_text = message.get("text", "").strip()
+        reply_token = event.get("replyToken", "")
         chat_id = get_chat_id(event)
+        sender_label = get_sender_label(event)
+
+        if not user_text:
+            continue
+
+        if user_text.lower() in RESET_COMMANDS:
+            clear_history(chat_id)
+            reply_line(reply_token, "문맥 기억을 초기화했어요.")
+            continue
+
+        direction = detect_direction(user_text)
+
+        if direction is None:
+            continue
 
         try:
             translated = translate_text(user_text, chat_id)
 
-            if translated and reply_token:
+            if translated:
                 reply_line(reply_token, translated)
-
-                add_history(chat_id, "Original", user_text)
-                add_history(chat_id, "Translation", translated)
+                language_label = get_language_label(direction)
+                add_history(chat_id, sender_label, language_label, user_text)
 
         except Exception as error:
             print("Translation error:", str(error))
-
-            if reply_token:
-                reply_line(reply_token, "번역 오류가 발생했어요. 잠시 후 다시 보내주세요.")
+            reply_line(reply_token, "번역 오류가 발생했어요. 잠시 후 다시 보내주세요.")
 
     return {
         "status": "ok"
