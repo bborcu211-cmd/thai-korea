@@ -2,8 +2,8 @@ import os
 import re
 import hmac
 import json
-import hashlib
 import base64
+import hashlib
 import requests
 from collections import defaultdict, deque
 
@@ -18,20 +18,12 @@ LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 
-MAX_HISTORY_ITEMS = 10
-MAX_CONTEXT_CHARS_PER_MESSAGE = 500
+MAX_HISTORY_ITEMS = 6
+MAX_CONTEXT_CHARS = 350
 
-# 채팅방별 최근 대화 기억
-# Render 무료 서버가 잠들거나 재배포되면 초기화됩니다.
 CHAT_HISTORY = defaultdict(lambda: deque(maxlen=MAX_HISTORY_ITEMS))
 
-RESET_COMMANDS = {
-    "/reset",
-    "/clear",
-    "/forget",
-    "reset",
-    "clear"
-}
+RESET_COMMANDS = {"/reset", "/clear", "/forget", "reset", "clear"}
 
 
 def count_korean(text):
@@ -55,6 +47,26 @@ def detect_direction(text):
     return "th_to_ko"
 
 
+def get_language_label(direction):
+    if direction == "ko_to_th":
+        return "Korean"
+
+    if direction == "th_to_ko":
+        return "Thai"
+
+    return "Unknown"
+
+
+def get_role_label(direction):
+    if direction == "ko_to_th":
+        return "Korean boyfriend"
+
+    if direction == "th_to_ko":
+        return "Thai girlfriend"
+
+    return "Unknown speaker"
+
+
 def get_chat_id(event):
     source = event.get("source", {})
     source_type = source.get("type", "")
@@ -71,17 +83,7 @@ def get_chat_id(event):
     return "default"
 
 
-def get_sender_label(event):
-    source = event.get("source", {})
-    user_id = source.get("userId", "unknown")
-
-    if user_id == "unknown":
-        return "speaker_unknown"
-
-    return "speaker_" + user_id[-6:]
-
-
-def shorten_text(text, limit=MAX_CONTEXT_CHARS_PER_MESSAGE):
+def shorten_text(text, limit=MAX_CONTEXT_CHARS):
     clean = " ".join(text.split())
 
     if len(clean) <= limit:
@@ -90,13 +92,13 @@ def shorten_text(text, limit=MAX_CONTEXT_CHARS_PER_MESSAGE):
     return clean[:limit] + "..."
 
 
-def add_history(chat_id, sender_label, language_label, text):
+def add_history(chat_id, direction, text):
     if not text:
         return
 
     CHAT_HISTORY[chat_id].append({
-        "sender": sender_label,
-        "language": language_label,
+        "role": get_role_label(direction),
+        "language": get_language_label(direction),
         "text": shorten_text(text)
     })
 
@@ -115,119 +117,117 @@ def get_recent_context(chat_id):
     lines = []
 
     for item in history:
-        sender = item.get("sender", "speaker_unknown")
-        language = item.get("language", "unknown")
+        role = item.get("role", "Unknown speaker")
+        language = item.get("language", "Unknown")
         text = item.get("text", "")
-        lines.append(f"{sender} [{language}]: {text}")
+        lines.append(f"{role} [{language}]: {text}")
 
     return "\n".join(lines)
 
 
-def get_language_label(direction):
+def get_translation_prompt(direction):
     if direction == "ko_to_th":
-        return "Korean"
-
-    if direction == "th_to_ko":
-        return "Thai"
-
-    return "Unknown"
-
-
-def get_korean_to_thai_prompt():
-    return """
-You are a careful Korean-to-Thai translator for private romantic LINE chat.
-
-Translate only the CURRENT Korean message into Thai.
-Use the recent conversation context only to resolve ambiguity.
-Do not translate or summarize the context.
-
-Accuracy comes first:
-- Understand the whole sentence before translating.
-- Preserve the original meaning, subject, object, tense, question form, and emotional intention.
-- Do not simplify, summarize, exaggerate, or reinterpret the message.
-- Do not add new information that is not in the original message.
-- If the meaning is ambiguous, choose a neutral translation that keeps the ambiguity instead of guessing too much.
-
-Naturalness comes second:
-- Make the Thai sound natural for a real LINE conversation between lovers.
-- The speaker is a Korean man talking to his Thai girlfriend.
-- Use masculine polite Thai such as ครับ only when it sounds natural.
-- Preserve joking, teasing, sulking, playful complaints, dialect-like endings, laughter, 555, emojis, and punctuation.
-- Keep short casual messages short and casual.
-
-Korean grammar and nuance:
-- Preserve past tense, present tense, future intention, negation, and questions.
-- Korean casual or idiomatic expressions should be translated by intended meaning, not word by word.
-- Korean particles such as 은/는, 이/가, 을/를 often show focus. Preserve what the sentence is really about.
-- If the Korean sentence misses a place, translate the place as the thing being missed. If it misses a person, translate the person as the thing being missed. Do not confuse the two.
-- If the Korean sentence is a confirming question, keep it as a confirming question in Thai.
-
-Relationship tone:
-- Translate 여보 naturally as ที่รัก when appropriate.
-- Translate 자기 naturally as ที่รัก, ตัวเอง, or another natural Thai expression depending on context.
-- Do not make romantic chat sound like business Thai.
-
-Output only the Thai translation.
+        target_language = "Thai"
+        relationship = "The source message is usually from a Korean boyfriend to his Thai girlfriend."
+        style_rules = """
+Write natural Thai used in LINE couple chat.
+Use masculine polite Thai such as ครับ when natural.
+Translate 여보 as ที่รัก when natural.
+Translate 자기 as ที่รัก, ตัวเอง, or another natural Thai expression depending on context.
+Do not make it sound like business Thai.
 """
-
-
-def get_thai_to_korean_prompt():
-    return """
-You are a careful Thai-to-Korean translator for private romantic LINE chat.
-
-Translate only the CURRENT Thai message into Korean.
-Use the recent conversation context only to resolve ambiguity.
-Do not translate or summarize the context.
-
-Accuracy comes first:
-- Understand the whole sentence before translating.
-- Preserve the original meaning, subject, object, tense, question form, and emotional intention.
-- Do not simplify, summarize, exaggerate, or reinterpret the message.
-- Do not add new information that is not in the original message.
-- If the meaning is ambiguous, choose a neutral translation that keeps the ambiguity instead of guessing too much.
-
-Naturalness comes second:
-- Make the Korean sound natural for a real LINE conversation between lovers.
-- The speaker is a Thai woman talking to her Korean boyfriend.
-- Preserve soft feminine tone from ค่ะ and คะ naturally, but do not overdo it.
-- Preserve joking, teasing, sulking, playful complaints, laughter, 555, emojis, and punctuation.
-- Keep short casual messages short and casual.
-
-Thai grammar and nuance:
-- Thai relationship chat often uses flexible self-reference, lover-reference, kinship words, nicknames, and particles. Infer the role from context instead of defaulting to a literal family meaning.
-- Particles such as นะ, ล่ะ, เนี่ย, นี่นา, สิ, อะ, อ่ะ carry emotion. Preserve the feeling naturally instead of translating them word by word.
-- Preserve the exact target of verbs like คิดถึง, ชอบ, อยาก, เป็นห่วง, and ไม่อยาก. Do not confuse a person, place, action, or situation.
-- For app slang, filters, trends, or unclear TikTok/social-media expressions, use a neutral translation instead of over-interpreting.
-
-Relationship tone:
-- Translate ที่รัก naturally as 여보 when appropriate.
-- Do not make romantic chat sound stiff, dry, or formal.
-
-Output only the Korean translation.
-"""
-
-
-def translate_text(text, chat_id):
-    direction = detect_direction(text)
-
-    if direction is None:
-        return None
-
-    if direction == "ko_to_th":
-        system_prompt = get_korean_to_thai_prompt()
     else:
-        system_prompt = get_thai_to_korean_prompt()
-
-    recent_context = get_recent_context(chat_id)
-
-    user_prompt = f"""
-Recent conversation context:
-{recent_context}
-
-Current message to translate:
-{text}
+        target_language = "Korean"
+        relationship = "The source message is usually from a Thai girlfriend to her Korean boyfriend."
+        style_rules = """
+Write natural Korean used in LINE couple chat.
+Reflect ค่ะ and คะ as a soft feminine tone when natural.
+Translate ที่รัก as 여보 when natural.
+Do not make it stiff, dry, or textbook-like.
 """
 
+    return f"""
+You are a careful translator for private romantic LINE chat.
+
+Task:
+Translate only the CURRENT message into {target_language}.
+Use the recent conversation context only to resolve ambiguity.
+Do not translate, summarize, or repeat the context.
+
+Relationship:
+{relationship}
+
+Priority:
+1. Preserve exact meaning.
+2. Preserve subject, object, tense, negation, question form, cause-result relation, and emotional intention.
+3. Make the result natural for couple chat.
+4. Do not add details that are not in the source.
+
+Translation rules:
+- Understand the whole sentence before translating.
+- Do not translate word by word when it changes the intended meaning.
+- Do not simplify, summarize, exaggerate, or reinterpret.
+- If the source is ambiguous, keep it neutral instead of guessing too much.
+- Preserve 555, emojis, laughter, punctuation, teasing, joking, sulking, and playful complaints.
+- Do not change message/contact into phone call unless the source clearly says phone/call.
+- Do not turn vague words into specific actions unless the source clearly says them.
+- Preserve cause-result structures such as "because A, so B", "-라서", "-니까", "เพราะ", and "เลย".
+
+Korean caution:
+- Korean chat spacing can be informal or wrong. Do not split a natural Korean ending into a negative meaning unless it is clearly negative.
+- For example, "안답니다" can mean "알고 있어요 / 알아요" in context, not necessarily "안 답니다".
+- Korean particles 은/는, 이/가, 을/를 often show focus. Preserve what is actually being talked about.
+- If Korean says a place is missed, the place is the thing being missed. Do not turn it into missing a person.
+- Preserve past tense such as -었어요, -였어요, 이었어요, 했어요.
+
+Thai caution:
+- Thai relationship chat often uses flexible self-reference, lover-reference, nicknames, kinship words, and particles.
+- Do not translate kinship words literally unless the context clearly means family.
+- Thai classifiers such as ตัว, อัน, เรื่อง, คน can refer to omitted nouns from previous context.
+- ตัวเดียว can mean one item/piece if the context is clothes or things, not "alone".
+- Particles like นะ, ล่ะ, เนี่ย, นี่นา, สิ, อะ, อ่ะ carry emotion. Reflect the feeling naturally.
+- For social-media, TikTok, filter, or trend expressions, translate neutrally if unclear.
+
+Style:
+{style_rules}
+
+Output only the translation.
+"""
+
+
+def get_review_prompt(direction):
+    if direction == "ko_to_th":
+        target_language = "Thai"
+    else:
+        target_language = "Korean"
+
+    return f"""
+You are a strict translation reviewer.
+
+Your job:
+Compare the source message and draft translation.
+If the draft is accurate, output it unchanged.
+If the draft changes meaning, rewrite it into accurate natural {target_language}.
+
+Check these problems carefully:
+- wrong tense
+- wrong negation
+- wrong subject or object
+- missing question form
+- missing cause-result relation
+- confusing person/place/action/item
+- translating message/contact as phone call without evidence
+- translating family/kinship words literally when context does not mean family
+- over-interpreting an ambiguous phrase
+- adding details not in the source
+- making romantic chat too stiff or formal
+- dropping 555, emoji, joke, teasing, or emotional tone
+
+Output only the final translation.
+"""
+
+
+def call_openai(system_prompt, user_prompt):
     result = client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
@@ -240,10 +240,46 @@ Current message to translate:
                 "content": user_prompt.strip()
             }
         ],
-        temperature=0.2
+        temperature=0.0
     )
 
     return result.choices[0].message.content.strip()
+
+
+def translate_text(text, chat_id):
+    direction = detect_direction(text)
+
+    if direction is None:
+        return None
+
+    recent_context = get_recent_context(chat_id)
+
+    translation_prompt = get_translation_prompt(direction)
+    translation_user_prompt = f"""
+Recent conversation context:
+{recent_context}
+
+Current message:
+{text}
+"""
+
+    draft_translation = call_openai(translation_prompt, translation_user_prompt)
+
+    review_prompt = get_review_prompt(direction)
+    review_user_prompt = f"""
+Recent conversation context:
+{recent_context}
+
+Source message:
+{text}
+
+Draft translation:
+{draft_translation}
+"""
+
+    final_translation = call_openai(review_prompt, review_user_prompt)
+
+    return final_translation
 
 
 def reply_line(reply_token, text):
@@ -333,7 +369,6 @@ async def webhook(request: Request):
         user_text = message.get("text", "").strip()
         reply_token = event.get("replyToken", "")
         chat_id = get_chat_id(event)
-        sender_label = get_sender_label(event)
 
         if not user_text:
             continue
@@ -353,8 +388,7 @@ async def webhook(request: Request):
 
             if translated:
                 reply_line(reply_token, translated)
-                language_label = get_language_label(direction)
-                add_history(chat_id, sender_label, language_label, user_text)
+                add_history(chat_id, direction, user_text)
 
         except Exception as error:
             print("Translation error:", str(error))
