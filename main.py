@@ -128,70 +128,61 @@ def get_recent_context(chat_id):
 def get_translation_prompt(direction):
     if direction == "ko_to_th":
         target_language = "Thai"
-        relationship = "The source message is usually from a Korean boyfriend to his Thai girlfriend."
-        style_rules = """
-Write natural Thai used in LINE couple chat.
-Use masculine polite Thai such as ครับ when natural.
-Translate 여보 as ที่รัก when natural.
-Translate 자기 as ที่รัก, ตัวเอง, or another natural Thai expression depending on context.
-Do not make it sound like business Thai.
+        direction_rules = """
+Source language: Korean
+Target language: Thai
+
+The speaker is usually a Korean man talking to his Thai girlfriend.
+Use Thai male speech only when the source tone naturally needs it.
+Use ครับ when the Korean is polite, soft, affectionate, or naturally polite.
+Do not add ครับ if the Korean is very short, blunt, or casual unless it sounds necessary.
+Translate 여보 as ที่รัก when it appears.
 """
     else:
         target_language = "Korean"
-        relationship = "The source message is usually from a Thai girlfriend to her Korean boyfriend."
-        style_rules = """
-Write natural Korean used in LINE couple chat.
-Reflect ค่ะ and คะ as a soft feminine tone when natural.
-Translate ที่รัก as 여보 when natural.
-Do not make it stiff, dry, or textbook-like.
+        direction_rules = """
+Source language: Thai
+Target language: Korean
+
+The speaker is usually a Thai woman talking to her Korean boyfriend.
+Reflect ค่ะ, คะ, นะคะ as a soft tone naturally, but do not over-explain them.
+Translate ที่รัก as 여보 when it appears.
+Keep 555 as 555 unless Korean laughter is clearly more natural.
 """
 
     return f"""
-You are a careful translator for private romantic LINE chat.
+You are a strict Korean-Thai translator.
 
-Task:
-Translate only the CURRENT message into {target_language}.
-Use the recent conversation context only to resolve ambiguity.
-Do not translate, summarize, or repeat the context.
+Translate the CURRENT message into {target_language} as faithfully and literally as possible.
 
-Relationship:
-{relationship}
+Most important rule:
+Translate only what is written in the source message.
+Do not add hidden meaning.
+Do not explain.
+Do not summarize.
+Do not make the message prettier.
+Do not make the sentence longer than necessary.
+Do not guess the speaker's intention beyond the words.
 
-Priority:
-1. Preserve exact meaning.
-2. Preserve subject, object, tense, negation, question form, cause-result relation, and emotional intention.
-3. Make the result natural for couple chat.
-4. Do not add details that are not in the source.
+Meaning rules:
+- Preserve the exact meaning.
+- Preserve subject, object, tense, negation, question form, and cause-result relation.
+- If the original is vague, keep it vague.
+- If the original is short, the translation must also be short.
+- If the original has no subject, do not add a subject unless the target language requires it.
+- Do not turn a message/contact/chat into a phone call unless the source clearly says call/phone.
+- Do not change "I", "you", "we", "that", "this", "there", "here" unless the source requires it.
+- Do not replace the original with a more emotional or romantic sentence.
+- Do not turn a simple sentence into an explanation.
 
-Translation rules:
-- Understand the whole sentence before translating.
-- Do not translate word by word when it changes the intended meaning.
-- Do not simplify, summarize, exaggerate, or reinterpret.
-- If the source is ambiguous, keep it neutral instead of guessing too much.
-- Preserve 555, emojis, laughter, punctuation, teasing, joking, sulking, and playful complaints.
-- Do not change message/contact into phone call unless the source clearly says phone/call.
-- Do not turn vague words into specific actions unless the source clearly says them.
-- Preserve cause-result structures such as "because A, so B", "-라서", "-니까", "เพราะ", and "เลย".
+Style rules:
+- Preserve the original tone, mood, slang, teasing, joking, sulking, awkwardness, 555, emojis, and punctuation as much as possible.
+- Naturalness is secondary to faithfulness.
+- A slightly awkward but faithful translation is better than a smooth but changed translation.
+- Output only the translation.
 
-Korean caution:
-- Korean chat spacing can be informal or wrong. Do not split a natural Korean ending into a negative meaning unless it is clearly negative.
-- For example, "안답니다" can mean "알고 있어요 / 알아요" in context, not necessarily "안 답니다".
-- Korean particles 은/는, 이/가, 을/를 often show focus. Preserve what is actually being talked about.
-- If Korean says a place is missed, the place is the thing being missed. Do not turn it into missing a person.
-- Preserve past tense such as -었어요, -였어요, 이었어요, 했어요.
-
-Thai caution:
-- Thai relationship chat often uses flexible self-reference, lover-reference, nicknames, kinship words, and particles.
-- Do not translate kinship words literally unless the context clearly means family.
-- Thai classifiers such as ตัว, อัน, เรื่อง, คน can refer to omitted nouns from previous context.
-- ตัวเดียว can mean one item/piece if the context is clothes or things, not "alone".
-- Particles like นะ, ล่ะ, เนี่ย, นี่นา, สิ, อะ, อ่ะ carry emotion. Reflect the feeling naturally.
-- For social-media, TikTok, filter, or trend expressions, translate neutrally if unclear.
-
-Style:
-{style_rules}
-
-Output only the translation.
+Direction rules:
+{direction_rules}
 """
 
 
@@ -202,30 +193,35 @@ def get_review_prompt(direction):
         target_language = "Korean"
 
     return f"""
-You are a strict translation reviewer.
+You are a strict literal translation reviewer.
+
+Compare the source message and draft translation.
 
 Your job:
-Compare the source message and draft translation.
-If the draft is accurate, output it unchanged.
-If the draft changes meaning, rewrite it into accurate natural {target_language}.
+- If the draft translation accurately preserves the source, output it unchanged.
+- If the draft adds meaning, removes meaning, explains too much, or rewrites too freely, fix it.
+- The final result must be a faithful {target_language} translation of the source.
 
-Check these problems carefully:
+Check carefully:
+- added details not in source
+- missing details from source
 - wrong tense
 - wrong negation
 - wrong subject or object
-- missing question form
+- wrong question form
 - missing cause-result relation
-- confusing person/place/action/item
-- translating message/contact as phone call without evidence
-- translating family/kinship words literally when context does not mean family
-- over-interpreting an ambiguous phrase
-- adding details not in the source
-- making romantic chat too stiff or formal
-- dropping 555, emoji, joke, teasing, or emotional tone
+- over-interpreting vague words
+- making a short sentence too long
+- making romantic chat too polished or too dramatic
+- translating chat/message/contact as phone call without evidence
+- changing the original emotional tone
+- dropping 555, emoji, joke, teasing, or awkwardness
 
+Important:
+Faithfulness is more important than smoothness.
+Do not explain your correction.
 Output only the final translation.
 """
-
 
 def call_openai(system_prompt, user_prompt):
     result = client.chat.completions.create(
@@ -256,8 +252,9 @@ def translate_text(text, chat_id):
 
     translation_prompt = get_translation_prompt(direction)
     translation_user_prompt = f"""
-Recent conversation context:
-{recent_context}
+Current message:
+{text}
+"""
 
 Current message:
 {text}
@@ -267,11 +264,12 @@ Current message:
 
     review_prompt = get_review_prompt(direction)
     review_user_prompt = f"""
-Recent conversation context:
-{recent_context}
-
 Source message:
 {text}
+
+Draft translation:
+{draft_translation}
+"""
 
 Draft translation:
 {draft_translation}
