@@ -248,21 +248,20 @@ def translate_text(text, chat_id):
     if direction is None:
         return None
 
-    recent_context = get_recent_context(chat_id)
-
     translation_prompt = get_translation_prompt(direction)
+
     translation_user_prompt = f"""
 Current message:
 {text}
 """
 
-Current message:
-{text}
-"""
-
-    draft_translation = call_openai(translation_prompt, translation_user_prompt)
+    draft_translation = call_openai(
+        translation_prompt,
+        translation_user_prompt
+    )
 
     review_prompt = get_review_prompt(direction)
+
     review_user_prompt = f"""
 Source message:
 {text}
@@ -271,11 +270,10 @@ Draft translation:
 {draft_translation}
 """
 
-Draft translation:
-{draft_translation}
-"""
-
-    final_translation = call_openai(review_prompt, review_user_prompt)
+    final_translation = call_openai(
+        review_prompt,
+        review_user_prompt
+    )
 
     return final_translation
 
